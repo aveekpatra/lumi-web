@@ -395,18 +395,21 @@ export default function MailClient() {
         }
 
         ::-webkit-scrollbar-thumb {
-          background: linear-gradient(
-            to bottom,
-            transparent,
-            rgba(59, 130, 246, 0.5),
-            transparent
-          );
+          background: rgba(59, 130, 246, 0.3);
           border-radius: 1px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+          background: rgba(59, 130, 246, 0.5);
         }
 
         /* Firefox */
         * {
           scrollbar-width: thin;
+          scrollbar-color: rgba(59, 130, 246, 0.3) transparent;
+        }
+
+        *:hover {
           scrollbar-color: rgba(59, 130, 246, 0.5) transparent;
         }
       `}</style>
@@ -563,6 +566,7 @@ export default function MailClient() {
                   emailRefs.current[index] = el;
                 }}
                 className={`
+                  group
                   p-3 relative
                   hover:bg-gray-800/30 cursor-pointer
                   transition-all duration-150
@@ -584,56 +588,61 @@ export default function MailClient() {
                 }}
               >
                 <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/30 to-transparent"></div>
-                <div className="flex items-start gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleEmailSelection(email.id);
-                    }}
-                    className="p-1 hover:bg-gray-800/50 rounded-lg"
-                  >
-                    <CheckIcon
-                      className={`h-3.5 w-3.5 ${
-                        selectedEmails.includes(email.id)
-                          ? "text-blue-400"
-                          : "text-gray-500"
-                      }`}
-                    />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleStarred(email.id);
-                    }}
-                    className="p-1 hover:bg-gray-800/50 rounded-lg"
-                  >
-                    <StarIcon
-                      className={`h-3.5 w-3.5 ${
-                        email.starred
-                          ? "text-yellow-400 fill-yellow-400"
-                          : "text-gray-500"
-                      }`}
-                    />
-                  </button>
+                <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start">
                       <div className="font-medium text-gray-100 truncate text-sm">
                         {email.sender}
                       </div>
-                      <div className="text-xs text-gray-400 ml-2">
-                        {email.time}
+                      <div className="flex items-center gap-1">
+                        {/* Action Buttons */}
+                        <div className="hidden group-hover:flex items-center gap-1 transition-all duration-200">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleEmailSelection(email.id);
+                            }}
+                            className="p-1 hover:bg-gray-800/50 rounded-lg"
+                          >
+                            <CheckIcon
+                              className={`h-3.5 w-3.5 ${
+                                selectedEmails.includes(email.id)
+                                  ? "text-blue-400"
+                                  : "text-gray-500"
+                              }`}
+                            />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleStarred(email.id);
+                            }}
+                            className="p-1 hover:bg-gray-800/50 rounded-lg"
+                          >
+                            <StarIcon
+                              className={`h-3.5 w-3.5 ${
+                                email.starred
+                                  ? "text-blue-400 fill-blue-400"
+                                  : "text-gray-500"
+                              }`}
+                            />
+                          </button>
+                          {email.hasAttachments && (
+                            <PaperClipIcon className="h-3.5 w-3.5 text-blue-400/70" />
+                          )}
+                          {email.isImportant && (
+                            <FlagIcon className="h-3.5 w-3.5 text-blue-400" />
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-400 ml-2">
+                          {email.time}
+                        </div>
                       </div>
                     </div>
                     <div className="font-medium text-gray-100 mt-0.5 truncate text-sm">
                       {email.subject}
                     </div>
-                    <div className="text-xs text-gray-400 mt-0.5 truncate flex items-center gap-1">
-                      {email.hasAttachments && (
-                        <PaperClipIcon className="h-3.5 w-3.5" />
-                      )}
-                      {email.isImportant && (
-                        <FlagIcon className="h-3.5 w-3.5 text-yellow-400" />
-                      )}
+                    <div className="text-xs text-gray-400 mt-0.5 truncate">
                       <span className="truncate">{email.preview}</span>
                     </div>
                   </div>
