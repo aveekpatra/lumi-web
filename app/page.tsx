@@ -331,41 +331,86 @@ export default function MailClient() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex flex-col overflow-hidden font-sans antialiased text-gray-100">
+    <div className="h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex flex-col overflow-hidden font-sans antialiased text-gray-100">
+      <style jsx global>{`
+        /* Webkit browsers (Chrome, Safari) */
+        ::-webkit-scrollbar {
+          width: 2px;
+          height: 2px;
+        }
+
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+          background: linear-gradient(
+            to bottom,
+            transparent,
+            rgba(59, 130, 246, 0.5),
+            transparent
+          );
+          border-radius: 1px;
+        }
+
+        /* Firefox */
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(59, 130, 246, 0.5) transparent;
+        }
+      `}</style>
+
       {/* Top Bar */}
-      <div className="h-12 bg-gray-900/80 backdrop-blur-xl flex items-center px-4 z-10 relative">
+      <div className="h-12 flex-shrink-0 bg-gray-900/80 backdrop-blur-xl flex items-center px-4 z-10 relative">
         <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
         <div className="flex items-center gap-4">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400"
+            className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400 transition-colors duration-200"
           >
             <Bars3Icon className="h-5 w-5" />
           </button>
-          <div className="relative">
+          <div className="relative group">
             <input
               type="text"
               placeholder="Search emails... (Press / to focus)"
-              className="w-64 px-4 py-1.5 pl-10 rounded-lg bg-gray-800/50 focus:bg-gray-800/70 border border-gray-700/50 focus:border-blue-500/30 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all duration-200 text-gray-100 placeholder-gray-500 text-sm"
+              className="
+                w-64 py-1.5 pl-9 pr-4 rounded-lg
+                bg-gray-800/50 hover:bg-gray-800/70
+                border border-gray-700/50
+                focus:border-blue-500/30 focus:outline-none focus:ring-2 focus:ring-blue-500/20
+                transition-all duration-300 ease-in-out
+                text-gray-100 placeholder-gray-500 text-sm
+                focus:w-96
+              "
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
             />
-            <MagnifyingGlassIcon className="absolute left-3 top-1.5 h-4 w-4 text-gray-500" />
+            <div
+              className="
+              absolute left-2.5 top-1/2 -translate-y-1/2
+              text-gray-500
+              transition-all duration-300 ease-in-out
+              group-focus-within:text-blue-500
+            "
+            >
+              <MagnifyingGlassIcon className="h-4 w-4" />
+            </div>
           </div>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-1">
-          <button className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400">
+          <button className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400 transition-colors duration-200">
             <ArrowPathIcon className="h-4 w-4" />
           </button>
-          <button className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400">
+          <button className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400 transition-colors duration-200">
             <EllipsisVerticalIcon className="h-4 w-4" />
           </button>
         </div>
       </div>
 
       {/* Main Container */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <div
           className={`
@@ -374,10 +419,11 @@ export default function MailClient() {
             transition-all duration-300 ease-in-out
             flex flex-col
             relative
+            flex-shrink-0
           `}
         >
           <div className="absolute inset-y-0 right-0 w-[1px] bg-gradient-to-b from-transparent via-blue-500/50 to-transparent"></div>
-          <div className="p-4">
+          <div className="p-4 flex-shrink-0">
             <button
               className={`
                 w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg 
@@ -395,7 +441,7 @@ export default function MailClient() {
             </button>
           </div>
 
-          <nav className="mt-2 flex-1">
+          <nav className="mt-2 flex-1 overflow-y-auto">
             {[
               { icon: InboxIcon, label: "Inbox" },
               { icon: StarIcon, label: "Starred" },
@@ -423,10 +469,10 @@ export default function MailClient() {
         </div>
 
         {/* Email List */}
-        <div className="w-[400px] bg-gray-900/80 backdrop-blur-xl flex flex-col relative">
+        <div className="w-[400px] bg-gray-900/80 backdrop-blur-xl flex flex-col relative flex-shrink-0">
           <div className="absolute inset-y-0 right-0 w-[1px] bg-gradient-to-b from-transparent via-blue-500/50 to-transparent"></div>
           {/* Email List Header */}
-          <div className="p-2 flex items-center gap-1 relative">
+          <div className="p-2 flex items-center gap-1 relative flex-shrink-0">
             <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
             <button className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400">
               <CheckIcon className="h-4 w-4" />
@@ -453,7 +499,7 @@ export default function MailClient() {
           </div>
 
           {/* Email List Content */}
-          <div className="overflow-y-auto flex-1">
+          <div className="overflow-y-auto flex-1 min-h-0">
             {mockEmails.map((email, index) => (
               <div
                 key={email.id}
@@ -539,11 +585,11 @@ export default function MailClient() {
         </div>
 
         {/* Email Content */}
-        <div className="flex-1 bg-gray-900/80 backdrop-blur-xl flex flex-col">
+        <div className="flex-1 bg-gray-900/80 backdrop-blur-xl flex flex-col min-h-0">
           {selectedEmail ? (
             <>
               {/* Email Content Header */}
-              <div className="p-3 flex items-center gap-1 relative">
+              <div className="p-3 flex items-center gap-1 relative flex-shrink-0">
                 <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
                 <button className="p-1.5 hover:bg-gray-800/50 rounded-lg text-gray-400">
                   <CheckIcon className="h-4 w-4" />
@@ -570,7 +616,7 @@ export default function MailClient() {
               </div>
 
               {/* Email Content Body */}
-              <div className="flex-1 p-6 overflow-y-auto">
+              <div className="flex-1 p-6 overflow-y-auto min-h-0">
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <h2 className="text-xl font-semibold text-gray-100">
@@ -593,7 +639,7 @@ export default function MailClient() {
               </div>
 
               {/* Email Content Footer */}
-              <div className="p-3 flex items-center gap-2 relative">
+              <div className="p-3 flex items-center gap-2 relative flex-shrink-0">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
                 <button className="px-3 py-1.5 rounded-lg bg-gray-800/50 hover:bg-gray-800/70 text-gray-300 flex items-center gap-1.5 text-sm border border-blue-500/20 hover:border-blue-500/30">
                   <ArrowUturnLeftIcon className="h-4 w-4" />
@@ -619,8 +665,8 @@ export default function MailClient() {
         </div>
       </div>
 
-      {/* Keyboard Shortcuts Help (Press ? to toggle) */}
-      <div className="fixed bottom-4 right-4 text-xs text-gray-400 bg-gray-900/90 p-3 rounded-lg border border-gray-800">
+      {/* Keyboard Shortcuts Help */}
+      <div className="fixed bottom-4 right-4 text-xs text-gray-400 bg-gray-900/90 p-3 rounded-lg border border-gray-800 z-50">
         <div className="font-medium mb-1">Keyboard Shortcuts:</div>
         <div>j/k - Navigate emails</div>
         <div>g/G - Go to top/bottom</div>
