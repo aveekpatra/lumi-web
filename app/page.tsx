@@ -172,19 +172,30 @@ function useLocalStorage<T>(
   initialValue: T
 ): [T, (value: T | ((prev: T) => T)) => void] {
   // State to store our value
-  // Pass initial state function to useState so logic is only executed once
-  const [storedValue, setStoredValue] = useState<T>(() => {
+  const [storedValue, setStoredValue] = useState<T>(initialValue);
+
+  // Load from localStorage on mount
+  useEffect(() => {
     try {
-      if (typeof window === "undefined") {
-        return initialValue;
-      }
       const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
+      if (item) {
+        const parsedItem = JSON.parse(item);
+        console.log("[useLocalStorage] Loaded from localStorage:", parsedItem);
+        setStoredValue(parsedItem);
+      } else {
+        console.log(
+          "[useLocalStorage] No stored value, using initial:",
+          initialValue
+        );
+        window.localStorage.setItem(key, JSON.stringify(initialValue));
+      }
     } catch (error) {
-      console.log(error);
-      return initialValue;
+      console.error(
+        "[useLocalStorage] Error reading from localStorage:",
+        error
+      );
     }
-  });
+  }, [key, initialValue]);
 
   // Return a wrapped version of useState's setter function that persists the new value to localStorage
   const setValue = (value: T | ((prev: T) => T)) => {
@@ -192,12 +203,15 @@ function useLocalStorage<T>(
       // Allow value to be a function so we have same API as useState
       const valueToStore =
         value instanceof Function ? value(storedValue) : value;
+
+      // Save state
       setStoredValue(valueToStore);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(key, JSON.stringify(valueToStore));
-      }
+
+      // Save to localStorage
+      window.localStorage.setItem(key, JSON.stringify(valueToStore));
+      console.log(`[useLocalStorage] Saved to localStorage:`, valueToStore);
     } catch (error) {
-      console.log(error);
+      console.error("[useLocalStorage] Error saving to localStorage:", error);
     }
   };
 
