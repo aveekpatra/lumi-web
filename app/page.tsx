@@ -166,10 +166,48 @@ const mockEmails: Email[] = [
   },
 ];
 
+// Custom hook for localStorage state
+function useLocalStorage<T>(
+  key: string,
+  initialValue: T
+): [T, (value: T | ((prev: T) => T)) => void] {
+  // State to store our value
+  // Pass initial state function to useState so logic is only executed once
+  const [storedValue, setStoredValue] = useState<T>(() => {
+    try {
+      if (typeof window === "undefined") {
+        return initialValue;
+      }
+      const item = window.localStorage.getItem(key);
+      return item ? JSON.parse(item) : initialValue;
+    } catch (error) {
+      console.log(error);
+      return initialValue;
+    }
+  });
+
+  // Return a wrapped version of useState's setter function that persists the new value to localStorage
+  const setValue = (value: T | ((prev: T) => T)) => {
+    try {
+      // Allow value to be a function so we have same API as useState
+      const valueToStore =
+        value instanceof Function ? value(storedValue) : value;
+      setStoredValue(valueToStore);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(key, JSON.stringify(valueToStore));
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  return [storedValue, setValue];
+}
+
 export default function MailClient() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useLocalStorage("sidebarOpen", true);
   const [selectedEmails, setSelectedEmails] = useState<number[]>([]);
   const [mode, setMode] = useState<"normal" | "visual">("normal");
   const [searchFocused, setSearchFocused] = useState(false);
@@ -341,15 +379,16 @@ export default function MailClient() {
           <div className="absolute inset-y-0 right-0 w-[1px] bg-gradient-to-b from-transparent via-blue-500/50 to-transparent"></div>
           <div className="p-4">
             <button
-              className="
+              className={`
                 w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg 
-                py-2 px-4 hover:from-blue-600 hover:to-blue-700
+                py-2 hover:from-blue-600 hover:to-blue-700
                 transition-all duration-200
                 flex items-center justify-center gap-2
                 font-medium text-sm
                 shadow-lg shadow-blue-500/20
                 border border-blue-400/30
-              "
+                ${sidebarOpen ? "px-4" : "px-2"}
+              `}
             >
               <PencilSquareIcon className="h-4 w-4" />
               <span className={sidebarOpen ? "block" : "hidden"}>Compose</span>
@@ -357,32 +396,29 @@ export default function MailClient() {
           </div>
 
           <nav className="mt-2 flex-1">
-            <div className="px-3 py-2 mx-2 rounded-lg hover:bg-gray-800/50 cursor-pointer flex items-center gap-3 text-gray-300 font-medium text-sm transition-colors duration-200 border border-transparent hover:border-blue-500/20">
-              <InboxIcon className="h-4 w-4" />
-              <span className={sidebarOpen ? "block" : "hidden"}>Inbox</span>
-            </div>
-            <div className="px-3 py-2 mx-2 rounded-lg hover:bg-gray-800/50 cursor-pointer flex items-center gap-3 text-gray-300 font-medium text-sm transition-colors duration-200 border border-transparent hover:border-blue-500/20">
-              <StarIcon className="h-4 w-4" />
-              <span className={sidebarOpen ? "block" : "hidden"}>Starred</span>
-            </div>
-            <div className="px-3 py-2 mx-2 rounded-lg hover:bg-gray-800/50 cursor-pointer flex items-center gap-3 text-gray-300 font-medium text-sm transition-colors duration-200 border border-transparent hover:border-blue-500/20">
-              <ClockIcon className="h-4 w-4" />
-              <span className={sidebarOpen ? "block" : "hidden"}>Snoozed</span>
-            </div>
-            <div className="px-3 py-2 mx-2 rounded-lg hover:bg-gray-800/50 cursor-pointer flex items-center gap-3 text-gray-300 font-medium text-sm transition-colors duration-200 border border-transparent hover:border-blue-500/20">
-              <PaperClipIcon className="h-4 w-4" />
-              <span className={sidebarOpen ? "block" : "hidden"}>
-                Attachments
-              </span>
-            </div>
-            <div className="px-3 py-2 mx-2 rounded-lg hover:bg-gray-800/50 cursor-pointer flex items-center gap-3 text-gray-300 font-medium text-sm transition-colors duration-200 border border-transparent hover:border-blue-500/20">
-              <ArchiveBoxIcon className="h-4 w-4" />
-              <span className={sidebarOpen ? "block" : "hidden"}>Archive</span>
-            </div>
-            <div className="px-3 py-2 mx-2 rounded-lg hover:bg-gray-800/50 cursor-pointer flex items-center gap-3 text-gray-300 font-medium text-sm transition-colors duration-200 border border-transparent hover:border-blue-500/20">
-              <TrashIcon className="h-4 w-4" />
-              <span className={sidebarOpen ? "block" : "hidden"}>Trash</span>
-            </div>
+            {[
+              { icon: InboxIcon, label: "Inbox" },
+              { icon: StarIcon, label: "Starred" },
+              { icon: ClockIcon, label: "Snoozed" },
+              { icon: PaperClipIcon, label: "Attachments" },
+              { icon: ArchiveBoxIcon, label: "Archive" },
+              { icon: TrashIcon, label: "Trash" },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className={`
+                  px-3 py-2 mx-2 rounded-lg hover:bg-gray-800/50 cursor-pointer
+                  transition-colors duration-200 border border-transparent hover:border-blue-500/20
+                  flex items-center ${sidebarOpen ? "gap-3" : "justify-center"}
+                  text-gray-300 font-medium text-sm
+                `}
+              >
+                <item.icon className="h-4 w-4 flex-shrink-0" />
+                <span className={sidebarOpen ? "block" : "hidden"}>
+                  {item.label}
+                </span>
+              </div>
+            ))}
           </nav>
         </div>
 
