@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   InboxIcon,
   PaperAirplaneIcon,
@@ -225,6 +225,43 @@ export default function MailClient() {
   const [selectedEmails, setSelectedEmails] = useState<number[]>([]);
   const [mode, setMode] = useState<"normal" | "visual">("normal");
   const [searchFocused, setSearchFocused] = useState(false);
+  const emailListRef = useRef<HTMLDivElement>(null);
+  const emailRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Initialize email refs array
+  useEffect(() => {
+    emailRefs.current = emailRefs.current.slice(0, mockEmails.length);
+  }, []);
+
+  // Scroll selected email into view
+  const scrollSelectedEmailIntoView = useCallback((index: number) => {
+    const emailElement = emailRefs.current[index];
+    if (emailElement && emailListRef.current) {
+      const container = emailListRef.current;
+      const elementRect = emailElement.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+
+      // Check if element is not fully visible
+      if (
+        elementRect.bottom > containerRect.bottom ||
+        elementRect.top < containerRect.top
+      ) {
+        // If element is below viewport, scroll it into view at the bottom
+        if (elementRect.bottom > containerRect.bottom) {
+          emailElement.scrollIntoView({ block: "end", behavior: "smooth" });
+        }
+        // If element is above viewport, scroll it into view at the top
+        else if (elementRect.top < containerRect.top) {
+          emailElement.scrollIntoView({ block: "start", behavior: "smooth" });
+        }
+      }
+    }
+  }, []);
+
+  // Update scroll position when selected index changes
+  useEffect(() => {
+    scrollSelectedEmailIntoView(selectedIndex);
+  }, [selectedIndex, scrollSelectedEmailIntoView]);
 
   // Vim-style navigation handlers
   useEffect(() => {
@@ -384,33 +421,6 @@ export default function MailClient() {
           >
             <Bars3Icon className="h-5 w-5" />
           </button>
-          <div className="relative group">
-            <input
-              type="text"
-              placeholder="Search emails... (Press / to focus)"
-              className="
-                w-64 py-1.5 pl-9 pr-4 rounded-lg
-                bg-gray-800/50 hover:bg-gray-800/70
-                border border-gray-700/50
-                focus:border-blue-500/30 focus:outline-none focus:ring-2 focus:ring-blue-500/20
-                transition-all duration-300 ease-in-out
-                text-gray-100 placeholder-gray-500 text-sm
-                focus:w-96
-              "
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => setSearchFocused(false)}
-            />
-            <div
-              className="
-              absolute left-2.5 top-1/2 -translate-y-1/2
-              text-gray-500
-              transition-all duration-300 ease-in-out
-              group-focus-within:text-blue-500
-            "
-            >
-              <MagnifyingGlassIcon className="h-4 w-4" />
-            </div>
-          </div>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-1">
@@ -485,6 +495,38 @@ export default function MailClient() {
         {/* Email List */}
         <div className="w-[400px] bg-gray-900/80 backdrop-blur-xl flex flex-col relative flex-shrink-0">
           <div className="absolute inset-y-0 right-0 w-[1px] bg-gradient-to-b from-transparent via-blue-500/50 to-transparent"></div>
+
+          {/* Search Bar */}
+          <div className="p-2 relative flex-shrink-0">
+            <div className="relative group">
+              <input
+                type="text"
+                placeholder="Search emails... (Press / to focus)"
+                className="
+                  w-full py-1.5 pl-9 pr-4 rounded-lg
+                  bg-gray-800/50 hover:bg-gray-800/70
+                  border border-gray-700/50
+                  focus:border-blue-500/30 focus:outline-none focus:ring-2 focus:ring-blue-500/20
+                  transition-all duration-300 ease-in-out
+                  text-gray-100 placeholder-gray-500 text-sm
+                "
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+              />
+              <div
+                className="
+                absolute left-2.5 top-1/2 -translate-y-1/2
+                text-gray-500
+                transition-all duration-300 ease-in-out
+                group-focus-within:text-blue-500
+              "
+              >
+                <MagnifyingGlassIcon className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
+          </div>
+
           {/* Email List Header */}
           <div className="p-2 flex items-center gap-1 relative flex-shrink-0">
             <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
@@ -513,10 +555,13 @@ export default function MailClient() {
           </div>
 
           {/* Email List Content */}
-          <div className="overflow-y-auto flex-1 min-h-0">
+          <div ref={emailListRef} className="overflow-y-auto flex-1 min-h-0">
             {mockEmails.map((email, index) => (
               <div
                 key={email.id}
+                ref={(el: HTMLDivElement | null) => {
+                  emailRefs.current[index] = el;
+                }}
                 className={`
                   p-3 relative
                   hover:bg-gray-800/30 cursor-pointer
