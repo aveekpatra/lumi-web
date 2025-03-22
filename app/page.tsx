@@ -361,7 +361,7 @@ export default function MailClient() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedIndex, selectedEmail, mode, searchFocused]);
+  }, [selectedIndex, selectedEmail, mode, searchFocused, setSidebarOpen]);
 
   // Update selected email when navigating
   useEffect(() => {
@@ -424,6 +424,7 @@ export default function MailClient() {
           >
             <Bars3Icon className="h-5 w-5" />
           </button>
+          <h1 className="text-xl font-bold tracking-wider bg-gradient-to-r from-purple-400 via-fuchsia-500 to-purple-600 text-transparent bg-clip-text">LUMI MAIL</h1>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-1">
