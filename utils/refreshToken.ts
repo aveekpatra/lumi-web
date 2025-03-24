@@ -2,63 +2,50 @@
  * Utility function to refresh the Gmail API access token
  */
 
-export async function refreshAccessToken(
-  refreshToken: string
-): Promise<string | null> {
-  console.log("[refreshAccessToken] Starting token refresh");
+export async function refreshGmailAccessToken(): Promise<void> {
   try {
-    const tokenEndpoint = "https://oauth2.googleapis.com/token";
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri = process.env.NEXT_PUBLIC_REDIRECT_URI;
+    console.log("[refreshAccessToken] Attempting to refresh token...");
+    console.log(
+      "[refreshAccessToken] Refresh token length:",
+      localStorage.getItem("gmail_refresh_token").length
+    );
 
-    if (!clientId || !clientSecret) {
-      console.error("[refreshAccessToken] Missing client credentials");
-      return null;
-    }
-
-    console.log("[refreshAccessToken] Preparing request with refresh token");
-    const response = await fetch(tokenEndpoint, {
+    const response = await fetch("/api/auth/refresh", {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
       },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: "refresh_token",
-        redirect_uri: redirectUri || "http://localhost:3000/api/auth/callback",
+      body: JSON.stringify({
+        refreshToken: localStorage.getItem("gmail_refresh_token"),
       }),
     });
 
-    console.log("[refreshAccessToken] Token response status:", response.status);
+    console.log("[refreshAccessToken] Response status:", response.status);
 
     if (!response.ok) {
-      const errorData = await response.text();
+      const errorText = await response.text();
       console.error(
         "[refreshAccessToken] Token refresh failed:",
         response.status,
-        errorData
+        errorText
       );
-      return null;
+      return;
     }
 
-    const tokenData = await response.json();
+    const data = await response.json();
     console.log("[refreshAccessToken] Token refresh successful");
+    console.log(
+      "[refreshAccessToken] New token expires in:",
+      data.expires_in,
+      "seconds"
+    );
 
-    // Update token expiry in localStorage
-    try {
-      const expiryTime = Date.now() + tokenData.expires_in * 1000;
-      localStorage.setItem("token_expiry", expiryTime.toString());
-      console.log("[refreshAccessToken] Updated token expiry in localStorage");
-    } catch (error) {
-      console.error("[refreshAccessToken] Error updating token expiry:", error);
-    }
-
-    return tokenData.access_token;
+    localStorage.setItem("gmail_access_token", data.access_token);
+    localStorage.setItem(
+      "token_expiry",
+      new Date(Date.now() + data.expires_in * 1000).toISOString()
+    );
   } catch (error) {
-    console.error("[refreshAccessToken] Error during token refresh:", error);
-    return null;
+    console.error("[refreshAccessToken] Error:", error);
   }
 }

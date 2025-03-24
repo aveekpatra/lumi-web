@@ -1,336 +1,410 @@
-import { Email } from "@/types/email";
-import {
-  getCachedEmails,
-  cacheSectionEmails,
-  shouldRefreshCache,
-  updateCacheMetadata,
-  clearAllCache,
-} from "./cache";
+import { Email, EmailSection, EmailsResponse } from "@/types/email";
+import { refreshGmailAccessToken } from "./refreshToken";
 
-export async function fetchEmails(section: string): Promise<Email[]> {
+// Constants
+const BATCH_SIZE = 20; // Increased from 10
+const MAX_EMAIL_FETCH = 500; // Maximum emails to fetch for metrics
+const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
+const STALE_THRESHOLD = 10 * 60 * 1000; // 10 minutes
+
+// Storage keys for caching
+const STORAGE_KEYS = {
+  EMAIL_CACHE: (section: EmailSection) => `lumi_email_cache_${section}`,
+  EMAIL_METADATA: (section: EmailSection) => `lumi_email_metadata_${section}`,
+  EMAIL_FETCH_IN_PROGRESS: "lumi_email_fetch_in_progress",
+};
+
+// Email cache metadata interface
+interface EmailCacheMetadata {
+  timestamp: number;
+  nextPageToken: string | null;
+  totalEmails: number;
+  resultSizeEstimate: number;
+  isComplete: boolean;
+}
+
+// Background refresh queue to prevent too many simultaneous refreshes
+const refreshQueue: string[] = [];
+let isRefreshing = false;
+
+// Build Gmail API query based on section
+function buildQueryForSection(section: EmailSection): string {
+  switch (section) {
+    case "inbox":
+      return "in:inbox -is:sent";
+    case "sent":
+      return "is:sent";
+    case "done":
+      return "label:done";
+    case "archive":
+      return "is:archived";
+    case "trash":
+      return "in:trash";
+    case "tracked":
+      return "label:tracked";
+    case "metrics":
+      // For metrics, we need to capture as many emails as possible
+      return ""; // Empty query to get all emails
+    case "compose":
+      return "";
+    default:
+      return "in:inbox";
+  }
+}
+
+// Get the cache freshness status
+function getCacheFreshness(timestamp: number): "fresh" | "stale" | "expired" {
+  const age = Date.now() - timestamp;
+  if (age > STALE_THRESHOLD) return "expired";
+  if (age > CACHE_EXPIRY) return "stale";
+  return "fresh";
+}
+
+// Main email fetching function
+export async function fetchEmails(
+  section: EmailSection,
+  pageToken?: string | null
+): Promise<EmailsResponse> {
+  console.log(
+    `[Gmail] Fetching emails for section: ${section}, pageToken: ${pageToken}`
+  );
+
   try {
+    // For metrics section, always attempt to load all available emails
+    if (section === "metrics") {
+      return await fetchAllEmailsForMetrics();
+    }
+
+    // If requesting a specific page, bypass cache
+    if (pageToken) {
+      return await fetchEmailsFromAPI(section, pageToken);
+    }
+
     // Check cache first
     const cachedEmails = getCachedEmails(section);
-    if (cachedEmails) {
-      console.log("[Gmail] Using cached emails for section:", section);
+    const metadata = getCacheMetadata(section);
 
-      // If cache is getting old, refresh in background
-      if (shouldRefreshCache(section)) {
-        console.log("[Gmail] Cache needs refresh, starting background refresh");
-        refreshCacheInBackground(section);
+    // If we have cached emails and metadata
+    if (cachedEmails && cachedEmails.length > 0 && metadata) {
+      const freshness = getCacheFreshness(metadata.timestamp);
+      console.log(
+        `[Gmail] Cache for ${section} is ${freshness} with ${cachedEmails.length} emails`
+      );
+
+      // If cache is still valid, use it
+      if (freshness !== "expired") {
+        // If stale, trigger a background refresh but still use cache
+        if (freshness === "stale") {
+          refreshInBackground(section);
+        }
+
+        return {
+          emails: cachedEmails,
+          nextPageToken: metadata.nextPageToken,
+          resultSizeEstimate: metadata.resultSizeEstimate,
+        };
       }
-
-      return cachedEmails;
     }
 
-    // No valid cache, fetch fresh emails
-    const accessToken = localStorage.getItem("gmail_access_token");
-    const refreshToken = localStorage.getItem("gmail_refresh_token");
-    const tokenExpiry = localStorage.getItem("token_expiry");
-
-    if (!accessToken || !refreshToken || !tokenExpiry) {
-      throw new Error("Missing authentication tokens");
-    }
-
-    // Check if access token needs refresh
-    const expiryTime = new Date(tokenExpiry).getTime();
-    if (expiryTime <= Date.now()) {
-      console.log("[Gmail] Access token expired, refreshing...");
-      await refreshAccessToken();
-    }
-
-    const emails = await fetchEmailsWithToken(section);
-
-    // Cache the results
-    cacheSectionEmails(section, emails);
-    updateCacheMetadata();
-
-    return emails;
+    // No valid cache or cache expired, fetch fresh emails
+    return await fetchEmailsFromAPI(section);
   } catch (error) {
     console.error("[Gmail] Error fetching emails:", error);
+
+    // Return cached emails as fallback if available
+    const cachedEmails = getCachedEmails(section);
+    const metadata = getCacheMetadata(section);
+
+    if (cachedEmails && cachedEmails.length > 0) {
+      console.log("[Gmail] Returning cached emails as fallback due to error");
+      return {
+        emails: cachedEmails,
+        nextPageToken: metadata?.nextPageToken || null,
+        resultSizeEstimate: metadata?.resultSizeEstimate || cachedEmails.length,
+      };
+    }
+
     throw error;
   }
 }
 
-async function refreshCacheInBackground(section: string): Promise<void> {
-  try {
+// Function to fetch emails specifically for metrics (loads all possible emails)
+async function fetchAllEmailsForMetrics(): Promise<EmailsResponse> {
+  console.log("[Gmail] Fetching all emails for metrics view");
+
+  // Check if we already have a complete metrics cache that's not expired
+  const cachedEmails = getCachedEmails("metrics");
+  const metadata = getCacheMetadata("metrics");
+
+  if (
+    cachedEmails &&
+    cachedEmails.length > 0 &&
+    metadata &&
+    metadata.isComplete &&
+    getCacheFreshness(metadata.timestamp) !== "expired"
+  ) {
     console.log(
-      "[Gmail] Starting background cache refresh for section:",
-      section
+      `[Gmail] Using complete metrics cache with ${cachedEmails.length} emails`
     );
-    const emails = await fetchEmailsWithToken(section);
-    cacheSectionEmails(section, emails);
-    updateCacheMetadata();
-    console.log("[Gmail] Background cache refresh completed");
+
+    // If cache is stale but complete, refresh in background
+    if (getCacheFreshness(metadata.timestamp) === "stale") {
+      refreshInBackground("metrics");
+    }
+
+    return {
+      emails: cachedEmails,
+      nextPageToken: null, // No more pages since we have all emails
+      resultSizeEstimate: metadata.resultSizeEstimate,
+    };
+  }
+
+  // No valid complete cache, fetch all emails
+  try {
+    // Mark fetch in progress to prevent duplicate fetches
+    localStorage.setItem(STORAGE_KEYS.EMAIL_FETCH_IN_PROGRESS, "true");
+
+    let allEmails: Email[] = [];
+    let nextPageToken: string | null = null;
+    let resultSizeEstimate = 0;
+    let isComplete = false;
+    let totalFetched = 0;
+
+    // Use a loop to fetch all pages
+    do {
+      console.log(
+        `[Gmail] Fetching metrics emails, page token: ${nextPageToken}, count so far: ${allEmails.length}`
+      );
+
+      const result = await fetchEmailsFromAPI("metrics", nextPageToken);
+
+      if (result.emails && result.emails.length > 0) {
+        // Add fetched emails to our collection
+        allEmails = [...allEmails, ...result.emails];
+        totalFetched += result.emails.length;
+      }
+
+      // Update metadata
+      resultSizeEstimate = result.resultSizeEstimate || 0;
+      nextPageToken = result.nextPageToken;
+
+      // Stop conditions:
+      // 1. No more pages (nextPageToken is null)
+      // 2. Reached maximum emails limit
+      // 3. API returned no emails
+      if (
+        !nextPageToken ||
+        totalFetched >= MAX_EMAIL_FETCH ||
+        result.emails.length === 0
+      ) {
+        isComplete = !nextPageToken || totalFetched >= resultSizeEstimate;
+        break;
+      }
+
+      // Small delay to avoid rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } while (totalFetched < MAX_EMAIL_FETCH);
+
+    // Save results to cache
+    if (allEmails.length > 0) {
+      setCachedEmails("metrics", allEmails);
+      setCacheMetadata("metrics", {
+        timestamp: Date.now(),
+        nextPageToken: nextPageToken,
+        totalEmails: allEmails.length,
+        resultSizeEstimate: resultSizeEstimate,
+        isComplete: isComplete,
+      });
+    }
+
+    console.log(
+      `[Gmail] Completed metrics fetch with ${allEmails.length} emails, isComplete: ${isComplete}`
+    );
+
+    return {
+      emails: allEmails,
+      nextPageToken: nextPageToken,
+      resultSizeEstimate: resultSizeEstimate,
+    };
   } catch (error) {
-    console.error("[Gmail] Error in background cache refresh:", error);
+    console.error("[Gmail] Error fetching all emails for metrics:", error);
+    throw error;
+  } finally {
+    // Clear in-progress flag
+    localStorage.removeItem(STORAGE_KEYS.EMAIL_FETCH_IN_PROGRESS);
   }
 }
 
-async function fetchEmailsWithToken(section: string): Promise<Email[]> {
+// Function to trigger a background refresh
+function refreshInBackground(section: EmailSection): void {
+  // Check if a fetch is already in progress
+  if (localStorage.getItem(STORAGE_KEYS.EMAIL_FETCH_IN_PROGRESS) === "true") {
+    console.log(
+      "[Gmail] Background refresh skipped - fetch already in progress"
+    );
+    return;
+  }
+
+  // Use setTimeout to run this asynchronously
+  setTimeout(async () => {
+    try {
+      console.log(`[Gmail] Starting background refresh for ${section}`);
+      localStorage.setItem(STORAGE_KEYS.EMAIL_FETCH_IN_PROGRESS, "true");
+
+      // Fetch fresh emails
+      await fetchEmailsFromAPI(section);
+
+      console.log(`[Gmail] Background refresh completed for ${section}`);
+    } catch (error) {
+      console.error(`[Gmail] Background refresh failed for ${section}:`, error);
+    } finally {
+      localStorage.removeItem(STORAGE_KEYS.EMAIL_FETCH_IN_PROGRESS);
+    }
+  }, 100);
+}
+
+// Core API fetch function
+async function fetchEmailsFromAPI(
+  section: EmailSection,
+  pageToken?: string | null
+): Promise<EmailsResponse> {
   const accessToken = localStorage.getItem("gmail_access_token");
   if (!accessToken) throw new Error("No access token available");
 
   try {
-    const response = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
+    // Prepare the query
+    const query = buildQueryForSection(section);
 
-    if (response.status === 401) {
-      console.log("[Gmail] Access token expired, refreshing...");
-      await refreshAccessToken();
-      return fetchEmailsWithToken(section);
+    // Determine maxResults based on section
+    const maxResults = section === "metrics" ? 50 : 20; // Higher for metrics
+
+    // Build the API URL
+    let apiUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`;
+
+    if (query) {
+      apiUrl += `&q=${encodeURIComponent(query)}`;
     }
 
+    if (pageToken) {
+      apiUrl += `&pageToken=${pageToken}`;
+    }
+
+    // Fetch the message list
+    const response = await fetch(apiUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    // Handle token expiration
+    if (response.status === 401) {
+      console.log("[Gmail] Token expired, refreshing...");
+      await refreshGmailAccessToken();
+      return fetchEmailsFromAPI(section, pageToken);
+    }
+
+    // Handle other errors
     if (!response.ok) {
       throw new Error(`Failed to fetch emails: ${response.statusText}`);
     }
 
+    // Parse the response
     const data = await response.json();
     const messages = data.messages || [];
-    const emails: Email[] = [];
+    const nextPageToken = data.nextPageToken || null;
+    const resultSizeEstimate = data.resultSizeEstimate || 0;
 
-    for (const message of messages) {
-      const email = await fetchEmailDetails(message.id, accessToken);
-      if (email) {
-        emails.push(email);
-      }
-    }
-
-    return emails;
-  } catch (error) {
-    console.error("[Gmail] Error in fetchEmailsWithToken:", error);
-    throw error;
-  }
-}
-
-async function refreshAccessToken() {
-  try {
-    console.log("[refreshAccessToken] Attempting to refresh token...");
     console.log(
-      "[refreshAccessToken] Refresh token length:",
-      localStorage.getItem("gmail_refresh_token").length
+      `[Gmail] Fetched ${messages.length} message IDs, total estimate: ${resultSizeEstimate}`
     );
-
-    const response = await fetch("/api/auth/refresh", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        refreshToken: localStorage.getItem("gmail_refresh_token"),
-      }),
-    });
-
-    console.log("[refreshAccessToken] Response status:", response.status);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(
-        "[refreshAccessToken] Token refresh failed:",
-        response.status,
-        errorText
-      );
-      return;
-    }
-
-    const data = await response.json();
-    console.log("[refreshAccessToken] Token refresh successful");
-    console.log(
-      "[refreshAccessToken] New token expires in:",
-      data.expires_in,
-      "seconds"
-    );
-
-    localStorage.setItem("gmail_access_token", data.access_token);
-    localStorage.setItem(
-      "token_expiry",
-      new Date(Date.now() + data.expires_in * 1000).toISOString()
-    );
-  } catch (error) {
-    console.error("[refreshAccessToken] Error:", error);
-  }
-}
-
-// Function for cookie-based API calls
-async function fetchEmailsWithCookies(section: string) {
-  try {
-    console.log(
-      "[fetchEmailsWithCookies] Starting to fetch emails with cookies..."
-    );
-
-    // Fetch email list
-    const messagesResponse = await fetch(
-      `/api/gmail/messages?section=${section}`
-    );
-    if (!messagesResponse.ok) {
-      throw new Error(`Failed to fetch messages: ${messagesResponse.status}`);
-    }
-
-    const messagesData = await messagesResponse.json();
-    const messages = messagesData.messages || [];
-    console.log("[fetchEmailsWithCookies] Found", messages.length, "messages");
 
     if (messages.length === 0) {
-      return [];
+      // No messages found, return an empty result
+      const existingEmails = getCachedEmails(section) || [];
+
+      // If this is a first page request, we should update the cache timestamp
+      if (!pageToken && existingEmails.length > 0) {
+        setCacheMetadata(section, {
+          timestamp: Date.now(),
+          nextPageToken: null,
+          totalEmails: existingEmails.length,
+          resultSizeEstimate: resultSizeEstimate,
+          isComplete: true,
+        });
+      }
+
+      return {
+        emails: existingEmails,
+        nextPageToken: null,
+        resultSizeEstimate: resultSizeEstimate,
+      };
     }
 
-    const emails = [];
-    // Process first 10 for faster loading
-    for (const message of messages.slice(0, 10)) {
-      try {
-        const messageResponse = await fetch(`/api/gmail/message/${message.id}`);
-        if (!messageResponse.ok) {
-          console.error(
-            "[fetchEmailsWithCookies] Error fetching message:",
-            messageResponse.status
-          );
-          continue;
-        }
+    // Process message IDs in batches to get full details
+    const emailDetails: Email[] = [];
 
-        const messageData = await messageResponse.json();
-        const headers = {};
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batchIds = messages.slice(i, i + BATCH_SIZE).map((msg) => msg.id);
 
-        // Extract headers
-        messageData.payload.headers.forEach((header) => {
-          headers[header.name.toLowerCase()] = header.value;
-        });
+      // Fetch all message details in this batch concurrently
+      const batchPromises = batchIds.map((id) =>
+        fetchEmailDetails(id, accessToken)
+      );
+      const batchResults = await Promise.all(batchPromises);
 
-        // Extract sender information
-        let fromName = "";
-        let fromEmail = "";
+      // Filter out any null results and add to our collection
+      const validEmails = batchResults.filter(
+        (email) => email !== null
+      ) as Email[];
+      emailDetails.push(...validEmails);
 
-        if (headers.from) {
-          const fromMatch = headers.from.match(/"?([^"<]+)"?\s*<?([^>]*)>?/);
-          if (fromMatch) {
-            fromName = fromMatch[1].trim();
-            fromEmail = fromMatch[2].trim();
-          } else {
-            fromName = headers.from;
-            fromEmail = headers.from;
-          }
-        }
-
-        // Extract body using the common findBody function
-        const body = findBody(messageData.payload);
-
-        // Create email object
-        const email = {
-          id: message.id,
-          subject: headers.subject || "(No subject)",
-          from: headers.from || "",
-          fromName: fromName,
-          fromEmail: fromEmail,
-          to: headers.to || "",
-          date: headers.date || "",
-          bodyText: body.bodyText,
-          bodyHtml: body.bodyHtml,
-          isRead: !messageData.labelIds.includes("UNREAD"),
-          isStarred: messageData.labelIds.includes("STARRED"),
-          isArchived: messageData.labelIds.includes("ARCHIVE"),
-          isTrashed: messageData.labelIds.includes("TRASH"),
-          isSnoozed: messageData.labelIds.includes("SNOOZED"),
-          hasAttachments: messageData.labelIds.includes("HAS_ATTACHMENT"),
-          snippet: messageData.snippet || "",
-        };
-
-        emails.push(email);
-      } catch (error) {
-        console.error(
-          "[fetchEmailsWithCookies] Error processing message:",
-          error
-        );
+      // Small delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < messages.length) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
 
-    console.log("[fetchEmailsWithCookies] Processed", emails.length, "emails");
-    return emails;
+    console.log(
+      `[Gmail] Successfully fetched ${emailDetails.length} email details`
+    );
+
+    // If this is a first page (not pagination), update the cache
+    if (!pageToken) {
+      // Sort emails by date (newest first)
+      emailDetails.sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+
+      // Save to cache
+      setCachedEmails(section, emailDetails);
+      setCacheMetadata(section, {
+        timestamp: Date.now(),
+        nextPageToken: nextPageToken,
+        totalEmails: emailDetails.length,
+        resultSizeEstimate: resultSizeEstimate,
+        isComplete: !nextPageToken,
+      });
+
+      return {
+        emails: emailDetails,
+        nextPageToken: nextPageToken,
+        resultSizeEstimate: resultSizeEstimate,
+      };
+    } else {
+      // This is a pagination request, just return the results without caching
+      return {
+        emails: emailDetails,
+        nextPageToken: nextPageToken,
+        resultSizeEstimate: resultSizeEstimate,
+      };
+    }
   } catch (error) {
-    console.error("[fetchEmailsWithCookies] Error:", error);
+    console.error("[Gmail] Error in fetchEmailsFromAPI:", error);
     throw error;
   }
 }
 
-function findBody(part) {
-  if (!part) return { bodyText: "", bodyHtml: "" };
-
-  let bodyText = "";
-  let bodyHtml = "";
-
-  // Check if this part is a text part
-  if (part.mimeType === "text/plain" && part.body && part.body.data) {
-    try {
-      // Use proper base64 decoding with international character support
-      const decodedText = atob(
-        part.body.data.replace(/-/g, "+").replace(/_/g, "/")
-      );
-
-      // Convert the binary string to Unicode
-      const bytes = new Uint8Array(decodedText.length);
-      for (let i = 0; i < decodedText.length; i++) {
-        bytes[i] = decodedText.charCodeAt(i);
-      }
-      bodyText = new TextDecoder("utf-8").decode(bytes);
-      console.log("[findBody] Successfully decoded text/plain content");
-    } catch (error) {
-      console.error("[findBody] Error decoding text/plain:", error);
-      try {
-        // Fallback to the previous method
-        bodyText = atob(part.body.data.replace(/-/g, "+").replace(/_/g, "/"));
-        console.log("[findBody] Used fallback decoding for text/plain");
-      } catch (fallbackError) {
-        console.error(
-          "[findBody] Fallback decoding also failed:",
-          fallbackError
-        );
-        bodyText = "Error decoding email content.";
-      }
-    }
-  } else if (part.mimeType === "text/html" && part.body && part.body.data) {
-    try {
-      // Use proper base64 decoding with international character support
-      const decodedHtml = atob(
-        part.body.data.replace(/-/g, "+").replace(/_/g, "/")
-      );
-
-      // Convert the binary string to Unicode
-      const bytes = new Uint8Array(decodedHtml.length);
-      for (let i = 0; i < decodedHtml.length; i++) {
-        bytes[i] = decodedHtml.charCodeAt(i);
-      }
-      bodyHtml = new TextDecoder("utf-8").decode(bytes);
-      console.log("[findBody] Successfully decoded text/html content");
-    } catch (error) {
-      console.error("[findBody] Error decoding text/html:", error);
-      try {
-        // Fallback to the previous method
-        bodyHtml = atob(part.body.data.replace(/-/g, "+").replace(/_/g, "/"));
-        console.log("[findBody] Used fallback decoding for text/html");
-      } catch (fallbackError) {
-        console.error(
-          "[findBody] Fallback decoding also failed:",
-          fallbackError
-        );
-        bodyHtml = "Error decoding email content.";
-      }
-    }
-  } else if (part.parts) {
-    // Recursively search for text parts in multipart message
-    for (const subPart of part.parts) {
-      const subBody = findBody(subPart);
-      if (subBody.bodyText) bodyText = subBody.bodyText;
-      if (subBody.bodyHtml) bodyHtml = subBody.bodyHtml;
-    }
-  }
-
-  return { bodyText, bodyHtml };
-}
-
+// Fetch a single email's details
 async function fetchEmailDetails(
   messageId: string,
   accessToken: string
@@ -345,80 +419,215 @@ async function fetchEmailDetails(
       }
     );
 
+    // Handle token expiration
     if (response.status === 401) {
-      console.log(
-        "[Gmail] Access token expired while fetching email details, refreshing..."
-      );
-      await refreshAccessToken();
+      await refreshGmailAccessToken();
       return fetchEmailDetails(
         messageId,
         localStorage.getItem("gmail_access_token") || ""
       );
     }
 
+    // Handle other errors
     if (!response.ok) {
-      console.error("[Gmail] Error fetching email details:", response.status);
+      console.error(
+        `[Gmail] Error fetching message ${messageId}: ${response.status}`
+      );
       return null;
     }
 
     const messageData = await response.json();
-    const headers: { [key: string]: string } = {};
-
-    // Extract headers
-    messageData.payload.headers.forEach(
-      (header: { name: string; value: string }) => {
-        headers[header.name.toLowerCase()] = header.value;
-      }
-    );
-
-    // Extract body
-    let bodyText = "";
-    let bodyHtml = "";
-
-    function findBody(part: any) {
-      if (part.mimeType === "text/plain" && part.body.data) {
-        bodyText = Buffer.from(part.body.data, "base64").toString();
-      } else if (part.mimeType === "text/html" && part.body.data) {
-        bodyHtml = Buffer.from(part.body.data, "base64").toString();
-      } else if (part.parts) {
-        part.parts.forEach(findBody);
-      }
-    }
-
-    findBody(messageData.payload);
-
-    // Extract sender information
-    const from = headers.from || "";
-    const fromMatch = from.match(/([^<]+) <([^>]+)>/);
-    const fromName = fromMatch ? fromMatch[1].trim() : from;
-    const fromEmail = fromMatch ? fromMatch[2].trim() : from;
-
-    return {
-      id: messageId,
-      subject: headers.subject || "(No subject)",
-      from: from || "",
-      fromName: fromName || "Unknown",
-      fromEmail: fromEmail || "",
-      to: headers.to || "",
-      date: headers.date || new Date().toISOString(),
-      bodyText: bodyText || "",
-      bodyHtml: bodyHtml || "",
-      isRead: !messageData.labelIds.includes("UNREAD"),
-      isStarred: messageData.labelIds.includes("STARRED"),
-      snippet: messageData.snippet || "",
-      isArchived: messageData.labelIds.includes("ARCHIVE"),
-      isTrashed: messageData.labelIds.includes("TRASH"),
-      isSnoozed: messageData.labelIds.includes("SNOOZED"),
-      hasAttachments: messageData.labelIds.includes("HAS_ATTACHMENT"),
-      isSent: messageData.labelIds.includes("SENT"),
-      isScheduled: messageData.labelIds.includes("SCHEDULED"),
-      isDraft: messageData.labelIds.includes("DRAFT"),
-      isSpam: messageData.labelIds.includes("SPAM"),
-      isImportant: messageData.labelIds.includes("IMPORTANT"),
-      labelIds: messageData.labelIds || [],
-    };
+    return processMessageData(messageData);
   } catch (error) {
-    console.error("[Gmail] Error processing email details:", error);
+    console.error(`[Gmail] Error processing message ${messageId}:`, error);
     return null;
+  }
+}
+
+// Process the raw message data into our Email format
+function processMessageData(messageData: any): Email {
+  const headers: { [key: string]: string } = {};
+
+  // Extract headers
+  messageData.payload.headers.forEach(
+    (header: { name: string; value: string }) => {
+      headers[header.name.toLowerCase()] = header.value;
+    }
+  );
+
+  // Extract message body
+  const bodyData = extractBody(messageData.payload);
+
+  // Extract sender info
+  const { fromName, fromEmail } = extractSenderInfo(headers.from || "");
+
+  // Extract label info for all our custom flags
+  const labelIds = messageData.labelIds || [];
+  const isDone = labelIds.includes("DONE") || labelIds.includes("Label_1");
+  const isTracked =
+    labelIds.includes("TRACKED") || labelIds.includes("Label_2");
+
+  return {
+    id: messageData.id,
+    subject: headers.subject || "(No subject)",
+    from: headers.from || "",
+    fromName,
+    fromEmail,
+    to: headers.to || "",
+    date: headers.date || new Date().toISOString(),
+    bodyText: bodyData.bodyText || "",
+    bodyHtml: bodyData.bodyHtml || "",
+    isRead: !labelIds.includes("UNREAD"),
+    isStarred: labelIds.includes("STARRED"),
+    snippet: messageData.snippet || "",
+    isArchived: !labelIds.includes("INBOX") && !labelIds.includes("TRASH"),
+    isTrashed: labelIds.includes("TRASH"),
+    isSnoozed: labelIds.includes("SNOOZED"),
+    hasAttachments: labelIds.includes("HAS_ATTACHMENT"),
+    isSent: labelIds.includes("SENT"),
+    isDone,
+    isTracked,
+    labelIds,
+  };
+}
+
+// Extract sender name and email from the From header
+function extractSenderInfo(from: string): {
+  fromName: string;
+  fromEmail: string;
+} {
+  // Default values
+  let fromName = "Unknown";
+  let fromEmail = "";
+
+  if (!from) {
+    return { fromName, fromEmail };
+  }
+
+  // Try to match format: "Name <email@example.com>"
+  const match = from.match(/^"?([^"<]+)"?\s*<?([^>]*)>?$/);
+
+  if (match) {
+    fromName = match[1].trim();
+    fromEmail = match[2].trim();
+  } else if (from.includes("@")) {
+    // Fallback if format is just an email
+    fromName = from.split("@")[0];
+    fromEmail = from;
+  } else {
+    fromName = from;
+    fromEmail = "";
+  }
+
+  return { fromName, fromEmail };
+}
+
+// Extract email body text and HTML
+function extractBody(part: any): { bodyText: string; bodyHtml: string } {
+  let bodyText = "";
+  let bodyHtml = "";
+
+  // Check if this part has a body
+  if (part.body && part.body.data) {
+    const decodedData = Buffer.from(part.body.data, "base64").toString();
+
+    if (part.mimeType === "text/plain") {
+      bodyText = decodedData;
+    } else if (part.mimeType === "text/html") {
+      bodyHtml = decodedData;
+    }
+  }
+
+  // Recursively check all parts
+  if (part.parts) {
+    part.parts.forEach((subPart: any) => {
+      const subResult = extractBody(subPart);
+      if (subResult.bodyText && !bodyText) bodyText = subResult.bodyText;
+      if (subResult.bodyHtml && !bodyHtml) bodyHtml = subResult.bodyHtml;
+    });
+  }
+
+  return { bodyText, bodyHtml };
+}
+
+// Cache management functions
+function getCachedEmails(section: EmailSection): Email[] | null {
+  try {
+    const cacheKey = STORAGE_KEYS.EMAIL_CACHE(section);
+    const cache = localStorage.getItem(cacheKey);
+    if (!cache) return null;
+
+    return JSON.parse(cache);
+  } catch (error) {
+    console.error(
+      `[Gmail] Error retrieving cached emails for ${section}:`,
+      error
+    );
+    return null;
+  }
+}
+
+function setCachedEmails(section: EmailSection, emails: Email[]): void {
+  try {
+    const cacheKey = STORAGE_KEYS.EMAIL_CACHE(section);
+    localStorage.setItem(cacheKey, JSON.stringify(emails));
+  } catch (error) {
+    console.error(
+      `[Gmail] Error saving emails to cache for ${section}:`,
+      error
+    );
+  }
+}
+
+function getCacheMetadata(section: EmailSection): EmailCacheMetadata | null {
+  try {
+    const metadataKey = STORAGE_KEYS.EMAIL_METADATA(section);
+    const metadata = localStorage.getItem(metadataKey);
+    if (!metadata) return null;
+
+    return JSON.parse(metadata);
+  } catch (error) {
+    console.error(
+      `[Gmail] Error retrieving cache metadata for ${section}:`,
+      error
+    );
+    return null;
+  }
+}
+
+function setCacheMetadata(
+  section: EmailSection,
+  metadata: EmailCacheMetadata
+): void {
+  try {
+    const metadataKey = STORAGE_KEYS.EMAIL_METADATA(section);
+    localStorage.setItem(metadataKey, JSON.stringify(metadata));
+  } catch (error) {
+    console.error(`[Gmail] Error saving cache metadata for ${section}:`, error);
+  }
+}
+
+export function clearAllCache(): void {
+  try {
+    const sections: EmailSection[] = [
+      "inbox",
+      "sent",
+      "done",
+      "archive",
+      "trash",
+      "tracked",
+      "metrics",
+      "compose",
+    ];
+
+    sections.forEach((section) => {
+      localStorage.removeItem(STORAGE_KEYS.EMAIL_CACHE(section));
+      localStorage.removeItem(STORAGE_KEYS.EMAIL_METADATA(section));
+    });
+
+    localStorage.removeItem(STORAGE_KEYS.EMAIL_FETCH_IN_PROGRESS);
+    console.log("[Gmail] All email caches cleared");
+  } catch (error) {
+    console.error("[Gmail] Error clearing cache:", error);
   }
 }

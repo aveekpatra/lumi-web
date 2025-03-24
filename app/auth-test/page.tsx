@@ -21,6 +21,7 @@ export default function AuthTestPage() {
           refreshToken: null as string | null,
           tokenExpiry: null as string | null,
           cookies: document.cookie,
+          error: null as string | null,
         };
 
         try {

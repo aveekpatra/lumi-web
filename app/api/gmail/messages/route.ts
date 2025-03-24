@@ -124,149 +124,250 @@ export async function GET(request: NextRequest) {
 async function fetchMessages(accessToken: string, section: string) {
   console.log("[api/gmail/messages] Starting fetchMessages with token");
 
-  // Fetch list of messages without label filtering
-  console.log("[api/gmail/messages] Fetching all messages from Gmail API");
-  const messagesResponse = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50`,
-    {
+  try {
+    // Construct query based on section
+    const query = buildQueryForSection(section);
+
+    // Fetch list of messages with appropriate label filtering
+    console.log("[api/gmail/messages] Fetching messages with query:", query);
+
+    const url = new URL(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+    );
+    url.searchParams.append("maxResults", "25");
+
+    if (query) {
+      url.searchParams.append("q", query);
+    }
+
+    const messagesResponse = await fetch(url.toString(), {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
-    }
-  );
+    });
 
-  console.log(
-    "[api/gmail/messages] Message list response status:",
-    messagesResponse.status
-  );
-
-  if (!messagesResponse.ok) {
-    const errorText = await messagesResponse.text();
-    console.error(
-      "[api/gmail/messages] Error response:",
-      messagesResponse.status,
-      errorText
-    );
-    return NextResponse.json(
-      { error: "Failed to fetch message list" },
-      { status: messagesResponse.status }
-    );
-  }
-
-  const messagesData = await messagesResponse.json();
-  const messages = messagesData.messages || [];
-  console.log("[api/gmail/messages] Found", messages.length, "messages");
-
-  if (messages.length === 0) {
     console.log(
-      "[api/gmail/messages] No messages found, returning empty array"
+      "[api/gmail/messages] Message list response status:",
+      messagesResponse.status
     );
-    return NextResponse.json({ emails: [] });
+
+    if (!messagesResponse.ok) {
+      const errorText = await messagesResponse.text();
+      console.error(
+        "[api/gmail/messages] Error response:",
+        messagesResponse.status,
+        errorText
+      );
+      return NextResponse.json(
+        { error: "Failed to fetch message list" },
+        { status: messagesResponse.status }
+      );
+    }
+
+    const messagesData = await messagesResponse.json();
+    const messages = messagesData.messages || [];
+    console.log("[api/gmail/messages] Found", messages.length, "messages");
+
+    if (messages.length === 0) {
+      console.log(
+        "[api/gmail/messages] No messages found, returning empty array"
+      );
+      return NextResponse.json({ emails: [] });
+    }
+
+    // Use batch processing for better performance - process in smaller batches
+    const batchSize = 5;
+    const emails = [];
+    const messagesToProcess = messages.slice(0, 15); // Only process first 15 for faster initial load
+
+    // Process messages in batches
+    for (let i = 0; i < messagesToProcess.length; i += batchSize) {
+      const batchMessages = messagesToProcess.slice(i, i + batchSize);
+      console.log(
+        `[api/gmail/messages] Processing batch ${i / batchSize + 1} with ${
+          batchMessages.length
+        } messages`
+      );
+
+      // Process batch in parallel
+      const batchPromises = batchMessages.map((message) =>
+        fetchMessageDetails(message.id, accessToken)
+      );
+
+      const batchResults = await Promise.all(batchPromises);
+      emails.push(...batchResults.filter(Boolean)); // Filter out any null results
+    }
+
+    console.log(
+      "[api/gmail/messages] Successfully processed",
+      emails.length,
+      "messages"
+    );
+
+    console.log("[api/gmail/messages] Returning JSON response with emails");
+    return NextResponse.json({
+      emails,
+      nextPageToken: messagesData.nextPageToken || null,
+      resultSizeEstimate: messagesData.resultSizeEstimate || 0,
+    });
+  } catch (error) {
+    console.error("[api/gmail/messages] Error processing messages:", error);
+    return NextResponse.json(
+      { error: "An error occurred while fetching messages" },
+      { status: 500 }
+    );
   }
+}
 
-  const emails = [];
-  // Process first 10 messages for faster response
-  console.log("[api/gmail/messages] Processing first 10 messages");
-  for (const message of messages.slice(0, 10)) {
-    try {
-      // Fetch each message's details
-      console.log(
-        "[api/gmail/messages] Fetching details for message:",
-        message.id
-      );
-      const messageResponse = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
+// Fetch individual message details
+async function fetchMessageDetails(messageId: string, accessToken: string) {
+  try {
+    console.log(
+      "[api/gmail/messages] Fetching details for message:",
+      messageId
+    );
+    const messageResponse = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
 
-      console.log(
-        "[api/gmail/messages] Message details response status:",
+    console.log(
+      "[api/gmail/messages] Message details response status:",
+      messageResponse.status
+    );
+
+    if (!messageResponse.ok) {
+      console.error(
+        "[api/gmail/messages] Error fetching message details:",
         messageResponse.status
       );
+      return null;
+    }
 
-      if (!messageResponse.ok) {
-        console.error(
-          "[api/gmail/messages] Error fetching message details:",
-          messageResponse.status
-        );
-        continue;
-      }
+    const messageData = await messageResponse.json();
+    console.log("[api/gmail/messages] Processing message headers and body");
 
-      const messageData = await messageResponse.json();
-      console.log("[api/gmail/messages] Processing message headers and body");
-      const headers = {};
+    return processMessageData(messageData);
+  } catch (error) {
+    console.error("[api/gmail/messages] Error processing message:", error);
+    return null;
+  }
+}
 
-      // Extract headers
-      messageData.payload.headers.forEach((header) => {
-        headers[header.name.toLowerCase()] = header.value;
-      });
+// Process message data into email object
+function processMessageData(messageData: any) {
+  const headers: { [key: string]: string } = {};
 
-      // Extract body
-      let bodyText = "";
-      let bodyHtml = "";
+  // Extract headers
+  messageData.payload.headers.forEach(
+    (header: { name: string; value: string }) => {
+      headers[header.name.toLowerCase()] = header.value;
+    }
+  );
 
-      function findBody(part) {
-        if (part.mimeType === "text/plain" && part.body.data) {
-          bodyText = Buffer.from(part.body.data, "base64").toString();
-        } else if (part.mimeType === "text/html" && part.body.data) {
-          bodyHtml = Buffer.from(part.body.data, "base64").toString();
-        } else if (part.parts) {
-          part.parts.forEach(findBody);
-        }
-      }
+  // Extract body
+  const bodyData = extractBody(messageData.payload);
 
-      findBody(messageData.payload);
+  // Extract sender information
+  const { fromName, fromEmail } = extractSenderInfo(headers.from || "");
 
-      // Extract sender information
-      const from = headers.from || "";
-      const fromMatch = from.match(/([^<]+) <([^>]+)>/);
-      const fromName = fromMatch ? fromMatch[1].trim() : from;
-      const fromEmail = fromMatch ? fromMatch[2].trim() : from;
+  console.log("[api/gmail/messages] Created email object for:", messageData.id);
+  return {
+    id: messageData.id,
+    subject: headers.subject || "(No subject)",
+    from: headers.from || "",
+    fromName: fromName || "Unknown",
+    fromEmail: fromEmail || "",
+    to: headers.to || "",
+    date: headers.date || new Date().toISOString(),
+    bodyText: bodyData.bodyText || "",
+    bodyHtml: bodyData.bodyHtml || "",
+    isRead: !messageData.labelIds.includes("UNREAD"),
+    isStarred: messageData.labelIds.includes("STARRED"),
+    snippet: messageData.snippet || "",
+    isArchived: messageData.labelIds.includes("ARCHIVE"),
+    isTrashed: messageData.labelIds.includes("TRASH"),
+    isSnoozed: messageData.labelIds.includes("SNOOZED"),
+    hasAttachments: messageData.labelIds.includes("HAS_ATTACHMENT"),
+    isSent: messageData.labelIds.includes("SENT"),
+    isScheduled: messageData.labelIds.includes("SCHEDULED"),
+    isDraft: messageData.labelIds.includes("DRAFT"),
+    isSpam: messageData.labelIds.includes("SPAM"),
+    isImportant: messageData.labelIds.includes("IMPORTANT"),
+    labelIds: messageData.labelIds || [],
+  };
+}
 
-      console.log("[api/gmail/messages] Created email object for:", message.id);
-      const email = {
-        id: message.id,
-        subject: headers.subject || "(No subject)",
-        from: from || "",
-        fromName: fromName || "Unknown",
-        fromEmail: fromEmail || "",
-        to: headers.to || "",
-        date: headers.date || new Date().toISOString(),
-        bodyText: bodyText || "",
-        bodyHtml: bodyHtml || "",
-        isRead: !messageData.labelIds.includes("UNREAD"),
-        isStarred: messageData.labelIds.includes("STARRED"),
-        snippet: messageData.snippet || "",
-        isArchived: messageData.labelIds.includes("ARCHIVE"),
-        isTrashed: messageData.labelIds.includes("TRASH"),
-        isSnoozed: messageData.labelIds.includes("SNOOZED"),
-        hasAttachments: messageData.labelIds.includes("HAS_ATTACHMENT"),
-        isSent: messageData.labelIds.includes("SENT"),
-        isScheduled: messageData.labelIds.includes("SCHEDULED"),
-        isDraft: messageData.labelIds.includes("DRAFT"),
-        isSpam: messageData.labelIds.includes("SPAM"),
-        isImportant: messageData.labelIds.includes("IMPORTANT"),
-        labelIds: messageData.labelIds || [], // Store all label IDs
-      };
+// Extract body content from message parts
+function extractBody(part: any): { bodyText: string; bodyHtml: string } {
+  let bodyText = "";
+  let bodyHtml = "";
 
-      emails.push(email);
-    } catch (error) {
-      console.error("[api/gmail/messages] Error processing message:", error);
+  // If the part has data directly
+  if (part.body && part.body.data) {
+    if (part.mimeType === "text/plain") {
+      bodyText = Buffer.from(part.body.data, "base64").toString();
+    } else if (part.mimeType === "text/html") {
+      bodyHtml = Buffer.from(part.body.data, "base64").toString();
     }
   }
 
-  console.log(
-    "[api/gmail/messages] Successfully processed",
-    emails.length,
-    "messages"
-  );
+  // Check for multi-part messages
+  if (part.parts) {
+    part.parts.forEach((subPart: any) => {
+      const subResult = extractBody(subPart);
+      if (subResult.bodyText && !bodyText) bodyText = subResult.bodyText;
+      if (subResult.bodyHtml && !bodyHtml) bodyHtml = subResult.bodyHtml;
+    });
+  }
 
-  console.log("[api/gmail/messages] Returning JSON response with emails");
-  return NextResponse.json({ emails });
+  return { bodyText, bodyHtml };
+}
+
+// Extract sender name and email
+function extractSenderInfo(from: string): {
+  fromName: string;
+  fromEmail: string;
+} {
+  if (!from) {
+    return { fromName: "Unknown", fromEmail: "" };
+  }
+
+  const fromMatch = from.match(/([^<]+) <([^>]+)>/);
+  return {
+    fromName: fromMatch ? fromMatch[1].trim() : from,
+    fromEmail: fromMatch ? fromMatch[2].trim() : from,
+  };
+}
+
+// Helper function to build appropriate query based on section
+function buildQueryForSection(section: string): string {
+  switch (section) {
+    case "inbox":
+      return "in:inbox";
+    case "sent":
+      return "in:sent";
+    case "starred":
+      return "is:starred";
+    case "draft":
+      return "is:draft";
+    case "trash":
+      return "in:trash";
+    case "spam":
+      return "in:spam";
+    case "important":
+      return "is:important";
+    case "snoozed":
+      return "label:snoozed";
+    case "all":
+      return "";
+    default:
+      return `in:${section}`;
+  }
 }
 
 // Helper function to refresh the token

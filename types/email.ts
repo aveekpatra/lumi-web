@@ -1,3 +1,13 @@
+export type EmailSection =
+  | "inbox"
+  | "compose"
+  | "sent"
+  | "done"
+  | "archive"
+  | "trash"
+  | "tracked"
+  | "metrics";
+
 export interface Email {
   id: string;
   subject: string;
@@ -10,15 +20,34 @@ export interface Email {
   bodyHtml: string;
   isRead: boolean;
   isStarred: boolean;
-  snippet: string;
   isArchived: boolean;
   isTrashed: boolean;
   isSnoozed: boolean;
   hasAttachments: boolean;
   isSent: boolean;
-  isScheduled: boolean;
-  isDraft: boolean;
-  isSpam: boolean;
-  isImportant: boolean;
+  isDone: boolean;
+  isTracked: boolean;
   labelIds: string[];
+  snippet: string;
+}
+
+export interface EmailsResponse {
+  emails: Email[];
+  nextPageToken: string | null;
+  resultSizeEstimate?: number;
+}
+
+export interface EmailCacheMetadata {
+  timestamp: number;
+  nextPageToken: string | null;
+  totalEmails: number;
+  resultSizeEstimate: number;
+  isComplete: boolean;
+}
+
+// Legacy interface for backward compatibility
+export interface EmailCacheDetails {
+  timestamp: number;
+  nextPageToken: string | null;
+  emails: Email[];
 }

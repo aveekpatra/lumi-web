@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
 
-  if (!code) {
+  if (!code) { 
     console.error("[callback] No code provided in search params");
     return NextResponse.redirect(new URL("/login", request.url));
   }
