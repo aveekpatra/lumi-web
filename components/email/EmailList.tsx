@@ -92,6 +92,18 @@ function formatEmailDate(dateString: string): string {
   }
 }
 
+// Format a date for display in the sidebar
+const formatFullDate = (date: Date) => {
+  return date.toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 // Replace the SimpleEmailView component with an enhanced version
 const EnhancedEmailView = ({
   email,
@@ -106,18 +118,6 @@ const EnhancedEmailView = ({
   onPrevEmail?: () => void;
   onNextEmail?: () => void;
 }) => {
-  // Format a date for display in the sidebar
-  const formatFullDate = (date: Date) => {
-    return date.toLocaleDateString(undefined, {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
   if (!email) return null;
 
   return (
@@ -363,6 +363,23 @@ const EnhancedEmailView = ({
   );
 };
 
+// Avatar colors array
+const AVATAR_COLORS = [
+  "bg-pink-100 text-pink-700",
+  "bg-purple-100 text-purple-700",
+  "bg-indigo-100 text-indigo-700",
+  "bg-blue-100 text-blue-700",
+  "bg-green-100 text-green-700",
+  "bg-yellow-100 text-yellow-700",
+  "bg-red-100 text-red-700",
+];
+
+// Get avatar color based on name
+const getAvatarColor = (name: string) => {
+  const colorIndex = name.charCodeAt(0) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[colorIndex];
+};
+
 export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
   (
     {
@@ -444,13 +461,6 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
 
     // Open email in full-screen view
     const openEmailFullScreen = (email: Email) => {
-      console.log(
-        "Opening email in fullscreen:",
-        JSON.stringify(email, null, 2)
-      ); // Log full email data
-      console.log("Email type:", typeof email);
-      console.log("Email keys:", email ? Object.keys(email) : "email is null");
-
       if (!email) {
         console.error("Attempted to open undefined email");
         return;
@@ -458,24 +468,20 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
 
       setSelectedEmail(email);
       setShowFullScreen(true);
-      // Lock body scroll when full screen is open
       document.body.style.overflow = "hidden";
     };
 
     // Close full-screen email view
     const closeEmailFullScreen = () => {
       setShowFullScreen(false);
-      setSelectedEmail(null); // Also clear selected email to prevent modal from showing
-      // Restore body scroll when full screen is closed
+      setSelectedEmail(null);
       document.body.style.overflow = "";
     };
 
-    // Toggle conversation expanded state
-    const toggleConversation = (conversationId: string) => {
-      setExpandedConversations((prev) => ({
-        ...prev,
-        [conversationId]: !prev[conversationId],
-      }));
+    // Handle email selection
+    const handleEmailSelect = (email: Email, index: number) => {
+      setSelectedIndex(index);
+      setSelectedEmail(email);
     };
 
     // Handle double click on an email item
@@ -742,20 +748,7 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
               {conversations.map((conversation, convIndex) => {
                 const latestEmail = conversation.emails[0];
                 const hasMultipleEmails = conversation.emails.length > 1;
-
-                // Add color generation logic
-                const colors = [
-                  "bg-pink-100 text-pink-700",
-                  "bg-purple-100 text-purple-700",
-                  "bg-indigo-100 text-indigo-700",
-                  "bg-blue-100 text-blue-700",
-                  "bg-green-100 text-green-700",
-                  "bg-yellow-100 text-yellow-700",
-                  "bg-red-100 text-red-700",
-                ];
-                const colorIndex =
-                  latestEmail.fromName.charCodeAt(0) % colors.length;
-                const avatarColors = colors[colorIndex];
+                const avatarColors = getAvatarColor(latestEmail.fromName);
 
                 return (
                   <div
@@ -771,7 +764,7 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
                       className={`flex items-center px-4 cursor-pointer ${
                         viewMode === "dense" ? "h-10 py-2" : "py-3"
                       }`}
-                      onClick={() => setSelectedIndex(convIndex)}
+                      onClick={() => handleEmailSelect(latestEmail, convIndex)}
                       onDoubleClick={() => handleEmailDoubleClick(latestEmail)}
                     >
                       {/* Checkbox (visible on hover or select) */}
@@ -913,7 +906,7 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
                             className={`flex items-center cursor-pointer hover:bg-gray-50 ${
                               viewMode === "dense" ? "h-10 py-2" : "py-3"
                             }`}
-                            onClick={() => setSelectedEmail(email)}
+                            onClick={() => handleEmailSelect(email, convIndex)}
                             onDoubleClick={() => handleEmailDoubleClick(email)}
                           >
                             {viewMode === "dense" ? (
@@ -1018,7 +1011,7 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
           )}
         </div>
 
-        {/* Full-screen Email View - Enhanced version */}
+        {/* Full-screen Email View */}
         {selectedEmail && showFullScreen && (
           <EnhancedEmailView
             email={selectedEmail}
@@ -1029,8 +1022,10 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
                 ? () => {
                     const prevConversation = conversations[selectedIndex - 1];
                     if (prevConversation) {
-                      setSelectedIndex(selectedIndex - 1);
-                      setSelectedEmail(prevConversation.emails[0]);
+                      handleEmailSelect(
+                        prevConversation.emails[0],
+                        selectedIndex - 1
+                      );
                     }
                   }
                 : undefined
@@ -1040,57 +1035,15 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
                 ? () => {
                     const nextConversation = conversations[selectedIndex + 1];
                     if (nextConversation) {
-                      setSelectedIndex(selectedIndex + 1);
-                      setSelectedEmail(nextConversation.emails[0]);
+                      handleEmailSelect(
+                        nextConversation.emails[0],
+                        selectedIndex + 1
+                      );
                     }
                   }
                 : undefined
             }
           />
-        )}
-
-        {/* Regular modal for non-fullscreen view (keeping it for compatibility) */}
-        {selectedEmail && !showFullScreen && (
-          <div className="fixed inset-0 bg-black/10 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-              <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-                <h2 className="text-xl font-medium text-gray-900">
-                  {selectedEmail.subject}
-                </h2>
-                <button
-                  onClick={() => setSelectedEmail(null)}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  <span className="text-sm">Press 'h' to close</span>
-                </button>
-              </div>
-              <div className="p-6 overflow-y-auto flex-1">
-                <div className="mb-6">
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
-                      <span className="text-lg font-medium text-indigo-700">
-                        {selectedEmail.fromName.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <div className="font-medium text-gray-900">
-                        {selectedEmail.fromName}
-                      </div>
-                      <div className="text-gray-500 text-sm">
-                        {selectedEmail.fromEmail}
-                      </div>
-                    </div>
-                    <div className="ml-auto text-gray-500 text-sm">
-                      {new Date(selectedEmail.date).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-                <div className="prose max-w-none text-gray-800">
-                  {selectedEmail.snippet}
-                </div>
-              </div>
-            </div>
-          </div>
         )}
       </div>
     );
