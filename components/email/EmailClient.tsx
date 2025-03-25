@@ -6,6 +6,7 @@ import { fetchEmails, clearAllCache } from "../../utils/gmail";
 import { EmailList } from "./EmailList";
 import { Sidebar } from "./Sidebar";
 import { Metrics } from "./Metrics";
+import { Gemini } from "./Gemini";
 import { TopBar } from "./TopBar";
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 
@@ -27,6 +28,7 @@ export function EmailClient() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true); // Default to open for better UX
   const [isMetricsLoading, setIsMetricsLoading] = useState(false); // Special loading state for metrics
   const emailListRef = useRef<HTMLDivElement>(null);
+  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
 
   // Load saved preferences from localStorage
   useEffect(() => {
@@ -239,6 +241,10 @@ export function EmailClient() {
           )}
         </div>
       );
+    }
+
+    if (currentSection === "gemini") {
+      return <Gemini emails={emails} selectedEmail={selectedEmail} />;
     }
 
     return (

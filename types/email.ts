@@ -6,29 +6,19 @@ export type EmailSection =
   | "archive"
   | "trash"
   | "tracked"
-  | "metrics";
+  | "metrics"
+  | "all"
+  | "gemini";
 
 export interface Email {
   id: string;
-  subject: string;
-  from: string;
   fromName: string;
   fromEmail: string;
-  to: string;
-  date: string;
-  bodyText: string;
-  bodyHtml: string;
-  isRead: boolean;
-  isStarred: boolean;
-  isArchived: boolean;
-  isTrashed: boolean;
-  isSnoozed: boolean;
-  hasAttachments: boolean;
-  isSent: boolean;
-  isDone: boolean;
-  isTracked: boolean;
-  labelIds: string[];
+  subject: string;
   snippet: string;
+  date: string;
+  isRead: boolean;
+  labels?: string[];
 }
 
 export interface EmailsResponse {

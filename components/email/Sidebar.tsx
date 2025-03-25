@@ -9,6 +9,8 @@ import {
   TrashIcon,
   FlagIcon,
   ChartBarIcon,
+  EnvelopeIcon,
+  SparklesIcon,
 } from "@heroicons/react/24/outline";
 
 interface SidebarProps {
@@ -38,6 +40,17 @@ export function Sidebar({ currentSection, onSectionChange }: SidebarProps) {
           >
             <InboxIcon className="h-4 w-4 flex-shrink-0" />
             <span>Inbox</span>
+          </button>
+          <button
+            onClick={() => onSectionChange("all")}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-sm ${
+              currentSection === "all"
+                ? "bg-indigo-50 text-indigo-700 font-medium"
+                : "text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            <EnvelopeIcon className="h-4 w-4 flex-shrink-0" />
+            <span>All Mail</span>
           </button>
           <button
             onClick={() => onSectionChange("sent")}
@@ -93,6 +106,17 @@ export function Sidebar({ currentSection, onSectionChange }: SidebarProps) {
           >
             <ChartBarIcon className="h-4 w-4 flex-shrink-0" />
             <span>Metrics</span>
+          </button>
+          <button
+            onClick={() => onSectionChange("gemini")}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-sm ${
+              currentSection === "gemini"
+                ? "bg-indigo-50 text-indigo-700 font-medium"
+                : "text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            <SparklesIcon className="h-4 w-4 flex-shrink-0" />
+            <span>Gemini AI</span>
           </button>
         </div>
       </nav>

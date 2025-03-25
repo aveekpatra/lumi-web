@@ -45,6 +45,8 @@ function buildQueryForSection(section: EmailSection): string {
     case "metrics":
       // For metrics, we need to capture as many emails as possible
       return ""; // Empty query to get all emails
+    case "all":
+      return ""; // Empty query to get all emails
     case "compose":
       return "";
     default:
