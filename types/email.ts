@@ -18,6 +18,8 @@ export interface Email {
   snippet: string;
   date: string;
   isRead: boolean;
+  isStarred: boolean;
+  hasAttachments: boolean;
   labels?: string[];
 }
 
