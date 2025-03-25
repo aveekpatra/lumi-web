@@ -484,6 +484,14 @@ export const EmailList = forwardRef<HTMLDivElement, EmailListProps>(
       setSelectedEmail(email);
     };
 
+    // Toggle conversation expanded state
+    const toggleConversation = (conversationId: string) => {
+      setExpandedConversations((prev) => ({
+        ...prev,
+        [conversationId]: !prev[conversationId],
+      }));
+    };
+
     // Handle double click on an email item
     const handleEmailDoubleClick = (email: Email) => {
       openEmailFullScreen(email);
